@@ -1,0 +1,2 @@
+# ConclurerGenderCache
+Cache for ConclurerGenderApi
