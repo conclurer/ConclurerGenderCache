@@ -9,7 +9,7 @@ Just include ConclurerGenderCache before including ConclurerGenderApi.
 ```php
 $modules->get("ConclurerGenderCache");
 
-$gender = $module->get("ConclurerGenderApi");
+$gender = $modules->get("ConclurerGenderApi");
 
 // First run
 $result = $gender->name("Torsten")->fetch();
