@@ -1,0 +1,10 @@
+{
+  "title": "Gender Cache",
+  "version": 100,
+  "author": "Conclurer GbR",
+  "summary": "Caches API results from gender-api.com's database",
+  "href": "https://www.conclurer.com/processwire",
+  "singular": true,
+  "autoload": false,
+  "requires": "ConclurerGenderApi"
+}

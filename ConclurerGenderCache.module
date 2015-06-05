@@ -1,0 +1,124 @@
+<?php
+
+class ConclurerGenderCache extends WireData implements Module {
+
+    const dbTableName = 'conclurer_gender_cache';
+    protected $api = null;
+    protected $tempCache = null;
+
+    public function init() {
+        $this->api = $this->modules->get("ConclurerGenderApi");
+        foreach (array('ConclurerGenderCacheResult') as $x) {
+            require_once dirname(__FILE__).DIRECTORY_SEPARATOR.'lib'.DIRECTORY_SEPARATOR.$x.'.php';
+        }
+
+        $this->addHookBefore("ConclurerGenderApiRequest::fetch", $this, "hookBeforeGenderFetch");
+        $this->addHookAfter("ConclurerGenderApiRequest::fetch", $this, "hookAfterGenderFetch");
+    }
+
+    public function ___install() {
+        $table = self::dbTableName;
+        $statement = $this->database->prepare("CREATE TABLE `$table` (`id` int(11) unsigned NOT NULL AUTO_INCREMENT, `name` varchar(255) DEFAULT NULL, `locale` varchar(2) DEFAULT NULL, `gender` varchar(1) DEFAULT NULL, `accuracy` int(3) DEFAULT NULL, PRIMARY KEY (`id`), KEY `name_locale` (`name`,`locale`)) ENGINE=InnoDB DEFAULT CHARSET=utf8;");
+        $statement->execute();
+        $this->message("Database Table '$table' was created");
+    }
+
+    public function ___uninstall() {
+        $table = self::dbTableName;
+        $statement = $this->database->prepare("DROP TABLE `$table`");
+        $statement->execute();
+        $this->message("Database Table '$table' was deleted");
+    }
+
+    public function hookBeforeGenderFetch (HookEvent $event) {
+        $request = $event->object;
+
+        // Cancel if request includes IP-based or language-based filtering
+        if ($request->localizationType == 'ip' || $request->localizationType == 'language') return;
+
+        // Cancel if request is based on mail address
+        if ($request->emailAddress != null) return;
+
+        $locale = $request->localizationType == 'none' ? '*' : $request->localizationValue;
+        $this->tempCache = new WireArray();
+        $notFound = array();
+
+        foreach ($request->names as $name) {
+            $query = $this->lookupName($name, $locale);
+            if ($query == null) {
+                $notFound[] = $name;
+            }
+            else {
+                $this->tempCache->push($query);
+            }
+        }
+
+        if (count($notFound) == 0) {
+            $event->replace = true;
+            if ($this->tempCache->count() == 1) $event->return = $this->tempCache->first();
+            else $event->return = $this->tempCache;
+
+            $this->tempCache = null;
+            return;
+        }
+
+        // Overwrite names with names that haven't been found
+        $request->names = $notFound;
+    }
+
+    public function hookAfterGenderFetch (HookEvent $event) {
+        $result = $event->return;
+
+        if ($result instanceof WireArray) {
+            foreach ($result as $element) $this->cacheResult($element);
+        }
+        else {
+            $this->cacheResult($result);
+        }
+
+        // Cancel if no cached elements are available
+        if ($this->tempCache == null) return;
+
+        $event->replace = true;
+        $z = new WireArray();
+        foreach ($this->tempCache as $item) $z->push($item);
+        if ($result instanceof WireArray) {
+            foreach ($result as $item) $z->push($item);
+        }
+        else $z->push($result);
+
+        if ($z->count() == 1) $event->return = $z->first();
+        else $event->return = $z;
+    }
+
+    public function lookupName ($name, $locale='*') {
+        $table = self::dbTableName;
+        $statement = $this->database->prepare("SELECT * FROM `$table` WHERE `name` = ? AND `locale` = ? LIMIT 1");
+        $statement->execute(array(strtolower($name), strtolower($locale)));
+
+        $result = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!$result) return null;
+
+        $object = new ConclurerGenderCacheResult();
+        switch ($result['gender']) {
+            case 'm': $result['gender'] = 'male'; break;
+            case 'f': $result['gender'] = 'female'; break;
+            case 'u': $result['gender'] = 'unknown'; break;
+        }
+        $result['country'] = strtoupper($result['locale']);
+        $object->data = $result;
+
+        return $object;
+    }
+
+    protected function cacheResult (WireData $object) {
+
+        // Cancel if result is already cached or caused an error
+        if ($object instanceof ConclurerGenderCacheResult) return;
+        if ($object instanceof ConclurerGenderApiErrorResult) return;
+
+        $table = self::dbTableName;
+        $statement = $this->database->prepare("INSERT INTO `$table` (`name`, `locale`, `gender`, `accuracy`) VALUES (?, ?, ?, ?)");
+        $statement->execute(array(strtolower($object->name), (isset($object->country) ? strtolower($object->country) : '*'), substr($object->gender, 0, 1), $object->accuracy));
+    }
+}
